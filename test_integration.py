@@ -5,6 +5,7 @@ from integration_script import SystemIntegrator
 from sensor_script import LiquidLevelSensor
 from voice_script import VoiceCommandRecognizer
 from powerautomate_script import PowerAutomateConnector
+import pytest
 
 class TestSystemIntegration(unittest.TestCase):
     def setUp(self):
@@ -25,6 +26,7 @@ class TestSystemIntegration(unittest.TestCase):
         self.test_level = 25.5
         self.test_command = ["start", "production"]
 
+    @pytest.mark.asyncio
     async def test_process_sensor_reading(self):
         """Test sensor reading processing"""
         # Setup mock returns
@@ -33,7 +35,7 @@ class TestSystemIntegration(unittest.TestCase):
 
         # Test successful processing
         result = await self.integrator.process_sensor_reading()
-        self.assertTrue(result)
+        assert result is True
         
         # Verify interactions
         self.mock_sensor.get_filtered_reading.assert_called_once()
