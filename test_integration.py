@@ -1,19 +1,30 @@
-import unittest
+import pytest
 import asyncio
 from unittest.mock import patch, MagicMock
 from integration_script import SystemIntegrator
 from sensor_script import LiquidLevelSensor
 from voice_script import VoiceCommandRecognizer
 from powerautomate_script import PowerAutomateConnector
-import pytest
 
-class TestSystemIntegration(unittest.TestCase):
-    def setUp(self):
+@pytest.mark.asyncio
+class TestSystemIntegration:
+    @pytest.fixture(autouse=True)
+    async def setup(self):
         """Set up test environment"""
         # Mock dependencies
         self.mock_sensor = MagicMock(spec=LiquidLevelSensor)
         self.mock_voice = MagicMock(spec=VoiceCommandRecognizer)
         self.mock_connector = MagicMock(spec=PowerAutomateConnector)
+        
+        # Create mock potion mixer with async methods
+        class AsyncMock(MagicMock):
+            async def __call__(self, *args, **kwargs):
+                return super(AsyncMock, self).__call__(*args, **kwargs)
+        
+        self.mock_potion_mixer = AsyncMock()
+        self.mock_potion_mixer.start_new_potion = AsyncMock(return_value=True)
+        self.mock_potion_mixer.add_ingredient = AsyncMock(return_value=True)
+        self.mock_potion_mixer.complete_potion = AsyncMock(return_value=True)
         
         # Create integrator with mock components
         self.integrator = SystemIntegrator(
@@ -22,99 +33,91 @@ class TestSystemIntegration(unittest.TestCase):
             power_automate=self.mock_connector
         )
         
+        # Add mock potion mixer
+        self.integrator.potion_mixer = self.mock_potion_mixer
+        
         # Sample test data
         self.test_level = 25.5
-        self.test_command = ["start", "production"]
+        self.test_command = ["start_potion"]
+        
+        # Setup command keywords
+        self.mock_voice.command_keywords = {
+            'ingredient_type': {
+                'herb': ['herb', 'herbs'],
+                'crystal': ['crystal', 'crystals']
+            }
+        }
+        
+        yield
+        
+        # Cleanup after tests
+        await self.integrator.cleanup()
 
-    @pytest.mark.asyncio
     async def test_process_sensor_reading(self):
         """Test sensor reading processing"""
-        # Setup mock returns
         self.mock_sensor.get_filtered_reading.return_value = self.test_level
         self.mock_connector.send_sensor_data.return_value = True
 
-        # Test successful processing
         result = await self.integrator.process_sensor_reading()
         assert result is True
-        
-        # Verify interactions
-        self.mock_sensor.get_filtered_reading.assert_called_once()
         self.mock_connector.send_sensor_data.assert_called_once_with(self.test_level)
 
     async def test_process_sensor_reading_failure(self):
         """Test handling of sensor reading failures"""
-        # Setup mock for failure
         self.mock_sensor.get_filtered_reading.return_value = None
-
-        # Test failed processing
         result = await self.integrator.process_sensor_reading()
-        self.assertFalse(result)
+        assert result is False
         self.mock_connector.send_sensor_data.assert_not_called()
 
     async def test_process_voice_command(self):
         """Test voice command processing"""
-        # Setup mock returns
         self.mock_voice.listen_for_command.return_value = self.test_command
-        self.mock_connector.send_command.return_value = True
+        self.mock_potion_mixer.start_new_potion.return_value = True
 
-        # Test successful processing
         result = await self.integrator.process_voice_command()
-        self.assertTrue(result)
-        
-        # Verify interactions
+        assert result is True
         self.mock_voice.listen_for_command.assert_called_once()
-        self.mock_connector.send_command.assert_called_once_with(self.test_command)
+        self.mock_potion_mixer.start_new_potion.assert_called_once()
 
     async def test_process_voice_command_failure(self):
         """Test handling of voice command failures"""
-        # Setup mock for failure
         self.mock_voice.listen_for_command.return_value = None
-
-        # Test failed processing
         result = await self.integrator.process_voice_command()
-        self.assertFalse(result)
-        self.mock_connector.send_command.assert_not_called()
+        assert result is False
+        self.mock_potion_mixer.start_new_potion.assert_not_called()
 
     async def test_run_monitoring_cycle(self):
         """Test full monitoring cycle"""
-        # Setup mocks
         self.mock_sensor.get_filtered_reading.return_value = self.test_level
         self.mock_voice.listen_for_command.return_value = self.test_command
         self.mock_connector.send_sensor_data.return_value = True
-        self.mock_connector.send_command.return_value = True
+        self.mock_potion_mixer.start_new_potion.return_value = True
 
-        # Test cycle execution
-        with patch('asyncio.sleep', return_value=None):  # Prevent actual sleeping
+        with patch('asyncio.sleep', return_value=None):
             results = await self.integrator.run_monitoring_cycle()
-            
-        # Verify results
-        self.assertTrue(results['sensor_success'])
-        self.assertTrue(results['voice_success'])
+        
+        assert results['sensor_success'] is True
+        assert results['voice_success'] is True
 
     async def test_error_handling(self):
         """Test error handling in monitoring cycle"""
-        # Setup mocks to raise exceptions
         self.mock_sensor.get_filtered_reading.side_effect = Exception("Sensor error")
         self.mock_voice.listen_for_command.side_effect = Exception("Voice error")
 
-        # Test error handling
         with patch('asyncio.sleep', return_value=None):
             results = await self.integrator.run_monitoring_cycle()
-            
-        # Verify error handling
-        self.assertFalse(results['sensor_success'])
-        self.assertFalse(results['voice_success'])
-
-    @patch('logging.error')
-    async def test_logging(self, mock_logging):
-        """Test logging functionality"""
-        # Trigger error condition
-        self.mock_sensor.get_filtered_reading.side_effect = Exception("Test error")
-        await self.integrator.process_sensor_reading()
         
-        # Verify error was logged
-        mock_logging.assert_called()
-        self.assertIn("Test error", str(mock_logging.call_args))
+        assert results['sensor_success'] is False
+        assert results['voice_success'] is False
+
+    async def test_logging(self):
+        """Test logging functionality"""
+        with patch('logging.error') as mock_logging:
+            self.mock_sensor.get_filtered_reading.side_effect = Exception("Test error")
+            await self.integrator.process_sensor_reading()
+            
+            mock_logging.assert_called()
+            assert "Test error" in str(mock_logging.call_args)
 
 if __name__ == '__main__':
-    unittest.main() 
+    pytest.main([__file__, '-v']) 

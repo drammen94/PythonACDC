@@ -15,7 +15,10 @@ def run_tests():
     pytest_args = [
         '-v',
         '--asyncio-mode=auto',
-        '--capture=no'
+        '--capture=no',
+        '--cov=.',
+        '--cov-report=term-missing',
+        '--cov-config=.coveragerc'
     ]
     
     # Try to add coverage reporting if plugin is available
